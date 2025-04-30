@@ -16,7 +16,7 @@ import threading
 import queue
 import itertools
 
-# Variables globales para almacenar la información necesaria
+# Variables globales
 file_1_lines = []
 file_2_lines = []
 file_1_name = ""
