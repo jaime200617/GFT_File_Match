@@ -13,8 +13,7 @@ import os
 import subprocess
 import pandas as pd
 import threading
-import queue
-import itertools
+from collections import Counter
 
 # Variables globales
 file_1_lines = []
@@ -32,8 +31,7 @@ comparison_time = 0
 differences = None
 difference_count = 0
 comparison_result = ""
-progress_queue = queue.Queue()
-should_sort_value = True
+comparison_done = False
 
 def select_file_1():
     file_path = filedialog.askopenfilename()
@@ -54,20 +52,25 @@ def select_file_2():
 def get_file_details(file_path):
     try:
         file_size = os.path.getsize(file_path)
+        file_size_mb = round(file_size / (1024 * 1024), 2)
         creation_time = datetime.fromtimestamp(os.path.getctime(file_path)).strftime('%Y-%m-%d %H:%M:%S')
         modification_time = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M:%S')
-        return file_size, creation_time, modification_time
+        return file_size_mb, creation_time, modification_time
     except:
         return 0, "", ""
         
 def compare_files():
-    global should_sort_value
-    should_sort_value = should_sort.get()  # leer el valor en el hilo principal
+    global comparison_done
+    comparison_done = False  # reiniciar al comenzar
+    text_comparison_result.config(state=ttk.NORMAL)
+    text_comparison_result.delete(1.0, ttk.END)
+    text_comparison_result.insert(ttk.END, "🕐 Procesando archivos, por favor espere...")
+    text_comparison_result.config(state=ttk.DISABLED)
+    simulate_progress()
     threading.Thread(target=compare_files_thread).start()
-    root.after(100, update_progress_bar)
 
 def compare_files_thread():
-    global comparison_result, differences, comparison_time, comparison_status
+    global comparison_result, differences, comparison_time, comparison_status, comparison_done
     global file_1_name, file_2_name, difference_count
     global file_1_size, file_2_size, file_1_creation, file_2_creation, file_1_modification, file_2_modification
     global file_1_lines, file_2_lines
@@ -86,68 +89,78 @@ def compare_files_thread():
     file_1_size, file_1_creation, file_1_modification = get_file_details(file_1_path)
     file_2_size, file_2_creation, file_2_modification = get_file_details(file_2_path)
 
-    file_1_lines = []
-    file_2_lines = []    
     differences = []
     comparison_status = "Failed"
 
-    # Leer y almacenar la cantidad de lineas de cada interfaz
     with open(file_1_path, encoding='utf-8', errors='ignore') as f1:
-        file_1_lines = [line.rstrip('\n') for line in f1]
-
+        file_1_lines = [line.strip() for line in f1]
     with open(file_2_path, encoding='utf-8', errors='ignore') as f2:
-        file_2_lines = [line.rstrip('\n') for line in f2]
+        file_2_lines = [line.strip() for line in f2]
 
-    if should_sort_value:
-        file_1_lines.sort()
-        file_2_lines.sort()
+    counter1 = Counter(file_1_lines)
+    counter2 = Counter(file_2_lines)
 
-    max_lines = max(len(file_1_lines), len(file_2_lines))
-    progress_queue.put(("max", max_lines))
-    progress_queue.put(("value", 0))
+    only_in_1 = list((counter1 - counter2).elements())
+    only_in_2 = list((counter2 - counter1).elements())
 
-    for i in range(max_lines):
-        line1 = file_1_lines[i] if i < len(file_1_lines) else ""
-        line2 = file_2_lines[i] if i < len(file_2_lines) else ""
+    difference_count = len(only_in_1) + len(only_in_2)
+    max_differences = int(entry_max_differences.get())
 
-        if line1 != line2:
-            differences.append((i + 1, line1, line2))
-        if i % 1000 == 0:
-            progress_queue.put(("value", i))
+    # Si no hay diferencias, marcar como exitoso y salir
+    if difference_count == 0:
+        comparison_status = "Successful"
+        comparison_time = round(time.time() - start_time, 2)
+        comparison_done = True
+        render_results()
+        return
 
-    difference_count = len(differences)
+    limit = min(len(only_in_1), len(only_in_2))
+    for i in range(limit):
+        if len(differences) >= max_differences:
+            break
+        differences.append((i + 1, only_in_1[i], only_in_2[i]))
+
+    for j in range(limit, max_differences):
+        if j < len(only_in_1):
+            differences.append((j + 1, only_in_1[j], ""))
+        elif j < len(only_in_2):
+            differences.append((j + 1, "", only_in_2[j]))
+        else:
+            break
+
     comparison_time = round(time.time() - start_time, 2)
-    comparison_status = "Successful" if difference_count == 0 else "Failed"
-    progress_queue.put(("done", True))
+    comparison_status = "Failed"
+    comparison_done = True
+    render_results()
 
-def update_progress_bar():
-    try:
-        while not progress_queue.empty():
-            msg = progress_queue.get_nowait()
-            if msg[0] == "max":
-                progress_bar["maximum"] = msg[1]
-            elif msg[0] == "value":
-                progress_bar["value"] = msg[1]
-                root.update_idletasks()  # <-- Forzar refresco de UI aquí
-            elif msg[0] == "done":
-                render_results()
-                return
-    except queue.Empty:
-        pass
-    root.after(100, update_progress_bar)
+def simulate_progress():
+    progress_bar["maximum"] = 100
+    progress_bar["value"] = 0
+
+    def step():
+        if comparison_done:
+            progress_bar["value"] = 100  # completar al finalizar
+            return
+
+        current = progress_bar["value"]
+        next_value = (current + 5) % 101  # reinicia al pasar 100
+        progress_bar["value"] = next_value
+        root.after(100, step)
+
+    step()
 
 def render_results():
     global comparison_result
 
     details_file_1 = (f"{file_1_name}:\n"
                         f"Number of lines: {len(file_1_lines)}\n"
-                        f"Size: {file_1_size} bytes\n"
+                        f"Size: {file_1_size} MB\n"
                         f"Creation date: {file_1_creation}\n"
                         f"Last modification date: {file_1_modification}")
 
     details_file_2 = (f"{file_2_name}:\n"
                         f"Number of lines: {len(file_2_lines)}\n"
-                        f"Size: {file_2_size} bytes\n"
+                        f"Size: {file_2_size} MB\n"
                         f"Creation date: {file_2_creation}\n"
                         f"Last modification date: {file_2_modification}")
 
@@ -307,8 +320,6 @@ def export_to_excel():
 root = ttk.Window(themename="superhero")  # Cambiado el tema a 'superhero'
 root.title("GFT FileMatch")
 
-should_sort = ttk.BooleanVar(value=True)
-
 # Ajustar el tamaño de la ventana para adaptarse a la pantalla
 screen_width = root.winfo_screenwidth()
 screen_height = root.winfo_screenheight()
@@ -348,9 +359,6 @@ button_browse_2.pack(side=LEFT)
 
 compare_frame = ttk.Frame(root)
 compare_frame.grid(row=3, column=0, columnspan=3, pady=10)
-
-check_sort = ttk.Checkbutton(compare_frame, text="Ordenar", variable=should_sort)
-check_sort.pack(side=LEFT, padx=(0, 20))
 
 button_compare = ttk.Button(compare_frame, text="Compare", command=compare_files, bootstyle="success-outline")
 button_compare.pack(side=LEFT)
