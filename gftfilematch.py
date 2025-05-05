@@ -1,19 +1,35 @@
+"""
+GFT FileMatch - Comparador de archivos de texto
+
+Esta aplicación de escritorio permite comparar dos archivos para identificar diferencias.
+Genera un resumen visual con detalles del archivo, permite exportar los resultados a PDF o Excel, y
+está construida con Python, Tkinter y ttkbootstrap.
+
+Autor: Jaime Londoño - GFT Technologies
+Última actualización: 2025-04-29
+"""
+
+# Librerías estándar
+import os
+import time
+import threading
+import subprocess
+from datetime import datetime
+from collections import Counter
+
+# Interfaz gráfica
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from tkinter import filedialog, messagebox
+
+# Reportes PDF y Excel
 from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.units import inch
-from datetime import datetime
-import time
-import os
-import subprocess
+from reportlab.lib import colors
 import pandas as pd
-import threading
-from collections import Counter
 
 # Variables globales
 file_1_lines = []
@@ -34,6 +50,7 @@ comparison_result = ""
 comparison_done = False
 
 def select_file_1():
+    """Abre un cuadro de diálogo para seleccionar el primer archivo y muestra la ruta en la interfaz."""
     file_path = filedialog.askopenfilename()
     if file_path:
         entry_file_1.config(state=ttk.NORMAL)
@@ -42,6 +59,7 @@ def select_file_1():
         entry_file_1.config(state=ttk.DISABLED)
 
 def select_file_2():
+    """Abre un cuadro de diálogo para seleccionar el segundo archivo y muestra la ruta en la interfaz."""
     file_path = filedialog.askopenfilename()
     if file_path:
         entry_file_2.config(state=ttk.NORMAL)
@@ -50,6 +68,14 @@ def select_file_2():
         entry_file_2.config(state=ttk.DISABLED)
 
 def get_file_details(file_path):
+    """Obtiene el tamaño, fecha de creación y última modificación de un archivo.
+
+    Args:
+        file_path (str): Ruta del archivo.
+
+    Returns:
+        tuple: (tamaño en MB, fecha creación, fecha modificación)
+    """
     try:
         file_size = os.path.getsize(file_path)
         file_size_mb = round(file_size / (1024 * 1024), 2)
@@ -60,20 +86,23 @@ def get_file_details(file_path):
         return 0, "", ""
         
 def compare_files():
+    """Lanza el hilo de comparación de archivos y muestra mensaje de espera en la interfaz."""
     global comparison_done
-    comparison_done = False  # reiniciar al comenzar
+    comparison_done = False
     text_comparison_result.config(state=ttk.NORMAL)
     text_comparison_result.delete(1.0, ttk.END)
-    text_comparison_result.insert(ttk.END, "🕐 Procesando archivos, por favor espere...")
+    text_comparison_result.insert(ttk.END, "🕐 Procesing files, please wait...")
     text_comparison_result.config(state=ttk.DISABLED)
     simulate_progress()
     threading.Thread(target=compare_files_thread).start()
 
 def compare_files_thread():
+    """Compara los archivos, calcula diferencias y genera los datos para mostrar y exportar."""
     global comparison_result, differences, comparison_time, comparison_status, comparison_done
     global file_1_name, file_2_name, difference_count
     global file_1_size, file_2_size, file_1_creation, file_2_creation, file_1_modification, file_2_modification
     global file_1_lines, file_2_lines
+    global only_in_1, only_in_2
 
     file_1_path = entry_file_1.get()
     file_2_path = entry_file_2.get()
@@ -97,9 +126,11 @@ def compare_files_thread():
     with open(file_2_path, encoding='utf-8', errors='ignore') as f2:
         file_2_lines = [line.strip() for line in f2]
 
+    # Contar las diferencias
     counter1 = Counter(file_1_lines)
     counter2 = Counter(file_2_lines)
 
+    # Encontrar las diferencias
     only_in_1 = list((counter1 - counter2).elements())
     only_in_2 = list((counter2 - counter1).elements())
 
@@ -134,6 +165,7 @@ def compare_files_thread():
     render_results()
 
 def simulate_progress():
+    """Simula el progreso en la barra mientras se realiza la comparación en segundo plano."""
     progress_bar["maximum"] = 100
     progress_bar["value"] = 0
 
@@ -150,16 +182,19 @@ def simulate_progress():
     step()
 
 def render_results():
+    """Muestra los resultados de la comparación en el cuadro de texto principal."""
     global comparison_result
 
     details_file_1 = (f"{file_1_name}:\n"
                         f"Number of lines: {len(file_1_lines)}\n"
+                        f"Unique records (only in File 1): {len(only_in_1)}\n"
                         f"Size: {file_1_size} MB\n"
                         f"Creation date: {file_1_creation}\n"
                         f"Last modification date: {file_1_modification}")
 
     details_file_2 = (f"{file_2_name}:\n"
                         f"Number of lines: {len(file_2_lines)}\n"
+                        f"Unique records (only in File 2): {len(only_in_2)}\n"
                         f"Size: {file_2_size} MB\n"
                         f"Creation date: {file_2_creation}\n"
                         f"Last modification date: {file_2_modification}")
@@ -187,6 +222,7 @@ def render_results():
     button_export_excel.config(state=ttk.NORMAL)
 
 def add_footer(canvas, doc):
+    """Agrega pie de pagina al documento PDF con información de fecha y hora."""
     canvas.saveState()
     canvas.setFont('Helvetica', 10)
     canvas.drawString(inch, 0.75 * inch, "GFT FileMatch")
@@ -194,6 +230,7 @@ def add_footer(canvas, doc):
     canvas.restoreState()
 
 def export_to_pdf():
+    """Exporta los resultados de la comparación a un archivo PDF."""
     global differences, difference_count
     if not comparison_result:
         messagebox.showerror("Error", "There are no comparison results to export.")
@@ -273,6 +310,7 @@ def export_to_pdf():
         messagebox.showerror("Error", f"Could not export the results: {e}")
 
 def export_to_excel():
+    """Exporta los resultados de la comparación a un archivo Excel."""
     global differences, difference_count
     if not comparison_result:
         messagebox.showerror("Error", "There are no comparison results to export.")
