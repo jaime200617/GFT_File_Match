@@ -47,7 +47,6 @@ comparison_time = 0
 differences = None
 difference_count = 0
 comparison_result = ""
-comparison_done = False
 
 def select_file_1():
     """Abre un cuadro de diálogo para seleccionar el primer archivo y muestra la ruta en la interfaz."""
@@ -87,22 +86,33 @@ def get_file_details(file_path):
         
 def compare_files():
     """Lanza el hilo de comparación de archivos y muestra mensaje de espera en la interfaz."""
-    global comparison_done
-    comparison_done = False
     text_comparison_result.config(state=ttk.NORMAL)
     text_comparison_result.delete(1.0, ttk.END)
     text_comparison_result.insert(ttk.END, "🕐 Procesing files, please wait...")
     text_comparison_result.config(state=ttk.DISABLED)
-    simulate_progress()
     threading.Thread(target=compare_files_thread).start()
 
 def compare_files_thread():
     """Compara los archivos, calcula diferencias y genera los datos para mostrar y exportar."""
-    global comparison_result, differences, comparison_time, comparison_status, comparison_done
+    global comparison_result, differences, comparison_time, comparison_status
     global file_1_name, file_2_name, difference_count
     global file_1_size, file_2_size, file_1_creation, file_2_creation, file_1_modification, file_2_modification
     global file_1_lines, file_2_lines
     global only_in_1, only_in_2
+
+    def find_indexes(source_lines, targets):
+        """Devuelve las posiciones (líneas humanas) de los elementos únicos dentro del archivo de forma eficiente."""
+        line_map = {}
+        for idx, val in enumerate(source_lines):
+            line_map.setdefault(val, []).append(idx + 1)  # índice humano
+
+        result = []
+        for val in targets:
+            if line_map.get(val):
+                result.append(line_map[val].pop(0))
+            else:
+                result.append(-1)  # si no lo encuentra, -1 (opcional)
+        return result
 
     file_1_path = entry_file_1.get()
     file_2_path = entry_file_2.get()
@@ -126,78 +136,66 @@ def compare_files_thread():
     with open(file_2_path, encoding='utf-8', errors='ignore') as f2:
         file_2_lines = [line.strip() for line in f2]
 
-    # Contar las diferencias
+    # Contar ocurrencias
     counter1 = Counter(file_1_lines)
     counter2 = Counter(file_2_lines)
 
-    # Encontrar las diferencias
     only_in_1 = list((counter1 - counter2).elements())
     only_in_2 = list((counter2 - counter1).elements())
 
+    indexes_1 = find_indexes(file_1_lines, only_in_1)
+    indexes_2 = find_indexes(file_2_lines, only_in_2)
+
     difference_count = len(only_in_1) + len(only_in_2)
     max_differences = int(entry_max_differences.get())
+    limit = min(len(only_in_1), len(only_in_2))
+    max_total = min(max_differences, difference_count)
 
-    # Si no hay diferencias, marcar como exitoso y salir
+    # ✅ Si no hay diferencias, marcar como exitoso
     if difference_count == 0:
         comparison_status = "Successful"
         comparison_time = round(time.time() - start_time, 2)
-        comparison_done = True
         render_results()
         return
 
-    limit = min(len(only_in_1), len(only_in_2))
+    # 🔁 Ciclo 1: elementos comparables
     for i in range(limit):
-        if len(differences) >= max_differences:
+        if len(differences) >= max_total:
             break
-        differences.append((i + 1, only_in_1[i], only_in_2[i]))
+        differences.append((indexes_1[i], only_in_1[i], only_in_2[i]))
 
-    for j in range(limit, max_differences):
+    # 🔁 Ciclo 2: sobrantes si aplica
+    for j in range(limit, max_total):
+        if len(differences) >= max_total:
+            break
         if j < len(only_in_1):
-            differences.append((j + 1, only_in_1[j], ""))
+            differences.append((indexes_1[j], only_in_1[j], ""))
         elif j < len(only_in_2):
-            differences.append((j + 1, "", only_in_2[j]))
+            differences.append((indexes_2[j], "", only_in_2[j]))
         else:
             break
 
     comparison_time = round(time.time() - start_time, 2)
     comparison_status = "Failed"
-    comparison_done = True
     render_results()
-
-def simulate_progress():
-    """Simula el progreso en la barra mientras se realiza la comparación en segundo plano."""
-    progress_bar["maximum"] = 100
-    progress_bar["value"] = 0
-
-    def step():
-        if comparison_done:
-            progress_bar["value"] = 100  # completar al finalizar
-            return
-
-        current = progress_bar["value"]
-        next_value = (current + 5) % 101  # reinicia al pasar 100
-        progress_bar["value"] = next_value
-        root.after(100, step)
-
-    step()
 
 def render_results():
     """Muestra los resultados de la comparación en el cuadro de texto principal."""
     global comparison_result
 
     details_file_1 = (f"{file_1_name}:\n"
-                        f"Number of lines: {len(file_1_lines)}\n"
-                        f"Unique records (only in File 1): {len(only_in_1)}\n"
-                        f"Size: {file_1_size} MB\n"
-                        f"Creation date: {file_1_creation}\n"
-                        f"Last modification date: {file_1_modification}")
+                      f"Number of lines: {len(file_1_lines)}\n"
+                      f"Unique records (only in File 1): {len(only_in_1)}\n"
+                      f"Size: {file_1_size} MB\n"
+                      f"Creation date: {file_1_creation}\n"
+                      f"Last modification date: {file_1_modification}")
 
     details_file_2 = (f"{file_2_name}:\n"
-                        f"Number of lines: {len(file_2_lines)}\n"
-                        f"Unique records (only in File 2): {len(only_in_2)}\n"
-                        f"Size: {file_2_size} MB\n"
-                        f"Creation date: {file_2_creation}\n"
-                        f"Last modification date: {file_2_modification}")
+                      f"Number of lines: {len(file_2_lines)}\n"
+                      f"Unique records (only in File 2): {len(only_in_2)}\n"
+                      f"Size: {file_2_size} MB\n"
+                      f"Creation date: {file_2_creation}\n"
+                      f"Last modification date: {file_2_modification}")
 
     comparison_info = f"Processing time: {comparison_time} seconds"
     differences_info = f"Lines with differences: {difference_count}"
@@ -210,8 +208,10 @@ def render_results():
 
     if differences:
         max_differences = int(entry_max_differences.get())
-        comparison_result += f"Comparison details (differences only, showing first {max_differences}):\n"
-        comparison_result += "\n".join([f"Line {diff[0]}:\n\t{file_1_name}: {diff[1]}\n\t{file_2_name}: {diff[2]}" for diff in differences[:max_differences]])
+        comparison_result += f"Comparison details (showing first {max_differences} differences):\n"
+        for diff in differences[:max_differences]:
+            line_num = diff[0] if diff[0] != -1 else "N/A"
+            comparison_result += f"\nLine {line_num}:\n\t{file_1_name}: {diff[1]}\n\t{file_2_name}: {diff[2]}"
 
     text_comparison_result.config(state=ttk.NORMAL)
     text_comparison_result.delete(1.0, ttk.END)
@@ -285,9 +285,17 @@ def export_to_pdf():
             elements.append(Paragraph(f"Comparison details (differences only, showing first {max_differences}):", styles['Normal']))
             elements.append(Spacer(1, 12))
 
+            max_text_length = 300
             table_data = [["Line", file_1_name, file_2_name]]
-            for diff in differences[:max_differences]:  # Limitar a max_differences
-                table_data.append([str(diff[0]), Paragraph(diff[1], styles['BodyText']), Paragraph(diff[2], styles['BodyText'])])
+            for diff in differences[:max_differences]:
+                line_number = str(diff[0]) if diff[0] != -1 else "N/A"
+                file1_value = diff[1][:max_text_length] + ("..." if len(diff[1]) > max_text_length else "")
+                file2_value = diff[2][:max_text_length] + ("..." if len(diff[2]) > max_text_length else "")
+                table_data.append([
+                    line_number,
+                    Paragraph(file1_value, styles['BodyText']),
+                    Paragraph(file2_value, styles['BodyText'])
+                ])
 
             table = Table(table_data, colWidths=[50, 250, 250])
             table.setStyle(TableStyle([
@@ -297,7 +305,9 @@ def export_to_pdf():
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('WORDWRAP', (0, 0), (-1, -1), 'CJK')
             ]))
             elements.append(table)
 
@@ -337,7 +347,7 @@ def export_to_excel():
 
         if differences:
             diff_data = {
-                "Line Number": [diff[0] for diff in differences[:max_differences]],  # Limitar a max_differences
+                "Line Number": [diff[0] if diff[0] != -1 else "N/A" for diff in differences[:max_differences]],
                 f"{file_1_name}": [diff[1] for diff in differences[:max_differences]],
                 f"{file_2_name}": [diff[2] for diff in differences[:max_differences]]
             }
@@ -401,10 +411,6 @@ compare_frame.grid(row=3, column=0, columnspan=3, pady=10)
 button_compare = ttk.Button(compare_frame, text="Compare", command=compare_files, bootstyle="success-outline")
 button_compare.pack(side=LEFT)
 
-# Agregar barra de progreso en la interfaz
-progress_bar = ttk.Progressbar(root, mode="determinate", length=300, bootstyle="success-striped")
-progress_bar.grid(row=4, column=0, columnspan=3, pady=10)
-
 # Crear un frame para el número máximo de diferencias a exportar y los botones de exportación
 export_frame = ttk.Frame(root)
 export_frame.grid(row=5, column=0, columnspan=3, pady=10)
@@ -438,7 +444,7 @@ text_comparison_result.pack(side=LEFT, fill=BOTH, expand=True)
 scrollbar.config(command=text_comparison_result.yview)
 
 # Añadir un label en la parte inferior derecha
-label_credit = ttk.Label(root, text="Developed with Python by Jaime Londoño - Property of GFT", font=("Arial", 8))
+label_credit = ttk.Label(root, text="Developed with Python by GFT", font=("Arial", 8))
 label_credit.grid(row=8, column=2, padx=10, pady=10, sticky="se")
 
 # Asegurar que la ventana principal se ajuste a los cambios
